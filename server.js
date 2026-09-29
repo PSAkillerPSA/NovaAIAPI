@@ -4,7 +4,7 @@ const PORT = process.env.PORT || 3000;
 
 // Free BlockRun model
 const BLOCKRUN_URL = "https://blockrun.ai/api/v1/chat/completions";
-const MODEL = "nvidia/nemotron-3.5-lightning";
+const MODEL = "zai/glm-5.3-flash";
 
 const server = http.createServer(async (req, res) => {
     // Only accept GET requests
