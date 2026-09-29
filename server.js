@@ -2,65 +2,20 @@ const http = require("http");
 
 const PORT = process.env.PORT || 3000;
 
-// BlockRun endpoint
-const BLOCKRUN_URL = "https://blockrun.ai/api/v1/chat/completions";
+const OR_KEY = process.env.OR_KEY;
+const HF_KEY = process.env.HF_KEY;
 
-// Free model
-const MODEL = "zai/glm-5.3-flash";
-
-const server = http.createServer(async (req, res) => {
-    if (req.method !== "GET") {
-        res.writeHead(405, {
-            "Content-Type": "application/json"
-        });
-
-        return res.end(
-            JSON.stringify({
-                error: "Only GET requests are allowed."
-            })
-        );
-    }
-
-    let prompt;
-
-    try {
-        prompt = decodeURIComponent(
-            req.url.split("?")[0].slice(1)
-        );
-    } catch {
-        res.writeHead(400, {
-            "Content-Type": "application/json"
-        });
-
-        return res.end(
-            JSON.stringify({
-                error: "Invalid URL encoding."
-            })
-        );
-    }
-
-    if (!prompt.trim()) {
-        res.writeHead(400, {
-            "Content-Type": "application/json"
-        });
-
-        return res.end(
-            JSON.stringify({
-                error: "Missing prompt. Use /your-prompt-here"
-            })
-        );
-    }
-
-    try {
-        const response = await fetch(BLOCKRUN_URL, {
+async function askOpenRouter(prompt) {
+    const response = await fetch(
+        "https://openrouter.ai/api/v1/chat/completions",
+        {
             method: "POST",
             headers: {
+                Authorization: `Bearer ${OR_KEY}`,
                 "Content-Type": "application/json"
-                // Add Authorization header here if required
-                // "Authorization": `Bearer ${process.env.BLOCKRUN_API_KEY}`
             },
             body: JSON.stringify({
-                model: MODEL,
+                model: "deepseek/deepseek-chat:free",
                 messages: [
                     {
                         role: "user",
@@ -68,52 +23,103 @@ const server = http.createServer(async (req, res) => {
                     }
                 ]
             })
-        });
-
-        const text = await response.text();
-
-        let data;
-        try {
-            data = JSON.parse(text);
-        } catch {
-            throw new Error(
-                `Invalid response from API: ${text}`
-            );
         }
+    );
 
-        if (!response.ok) {
-            res.writeHead(response.status, {
+    if (!response.ok) {
+        throw new Error(`OpenRouter ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    return data.choices[0].message.content;
+}
+
+async function askHF(prompt) {
+    const response = await fetch(
+        "https://api-inference.huggingface.co/models/microsoft/Phi-3-mini-4k-instruct",
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${HF_KEY}`,
                 "Content-Type": "application/json"
-            });
-
-            return res.end(
-                JSON.stringify({
-                    error: "BlockRun API error",
-                    details: data
-                })
-            );
+            },
+            body: JSON.stringify({
+                inputs: prompt
+            })
         }
+    );
 
-        const answer =
-            data?.choices?.[0]?.message?.content ||
-            "No response";
+    if (!response.ok) {
+        throw new Error(`HF ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    if (Array.isArray(data) && data[0]?.generated_text) {
+        return data[0].generated_text;
+    }
+
+    return JSON.stringify(data);
+}
+
+const server = http.createServer(async (req, res) => {
+    if (req.method !== "GET") {
+        return res.end("Only GET requests allowed");
+    }
+
+    const prompt = decodeURIComponent(
+        req.url.slice(1)
+    ).trim();
+
+    if (!prompt) {
+        return res.end(
+            "Use /your-prompt-here"
+        );
+    }
+
+    try {
+        let answer;
+
+        try {
+            console.log(
+                "Using OpenRouter..."
+            );
+
+            answer = await askOpenRouter(
+                prompt
+            );
+        } catch (e) {
+            console.log(
+                "OpenRouter failed:",
+                e.message
+            );
+
+            console.log(
+                "Using Hugging Face..."
+            );
+
+            answer = await askHF(prompt);
+        }
 
         res.writeHead(200, {
-            "Content-Type": "text/plain; charset=utf-8",
-            "Access-Control-Allow-Origin": "*"
+            "Content-Type":
+                "text/plain; charset=utf-8",
+            "Access-Control-Allow-Origin":
+                "*"
         });
 
         res.end(answer);
     } catch (err) {
-        console.error(err);
-
         res.writeHead(500, {
-            "Content-Type": "application/json"
+            "Content-Type":
+                "application/json"
         });
 
         res.end(
             JSON.stringify({
-                error: "Request failed",
+                error:
+                    "All providers failed",
                 details: err.message
             })
         );
@@ -122,6 +128,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, () => {
     console.log(
-        `NovaBot BlockRun proxy running on port ${PORT}`
+        `AI proxy running on port ${PORT}`
     );
 });
