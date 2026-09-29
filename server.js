@@ -2,8 +2,8 @@ const http = require("http");
 
 const PORT = process.env.PORT || 3000;
 
-const OR_KEY = process.env.OR_KEY;
-const HF_KEY = process.env.HF_KEY;
+const OR_KEY = process.env.OR_key;
+const HF_KEY = process.env.HF_key;
 
 async function askOpenRouter(prompt) {
     const response = await fetch(
