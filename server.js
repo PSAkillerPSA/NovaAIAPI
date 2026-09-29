@@ -2,8 +2,8 @@ const http = require("http");
 
 const PORT = process.env.PORT || 3000;
 
-const OR_KEY = process.env.OR_key;
-const HF_KEY = process.env.HF_key;
+const OR_KEY = process.env.OR_KEY;
+const HF_KEY = process.env.HF_KEY;
 
 async function askOpenRouter(prompt) {
     const response = await fetch(
@@ -11,11 +11,11 @@ async function askOpenRouter(prompt) {
         {
             method: "POST",
             headers: {
-                Authorization: `Bearer ${OR_KEY}`,
+                "Authorization": `Bearer ${OR_KEY}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: "deepseek/deepseek-chat:free",
+                model: "inclusionai/ling-3.0-flash-sante:free",
                 messages: [
                     {
                         role: "user",
@@ -26,22 +26,27 @@ async function askOpenRouter(prompt) {
         }
     );
 
+    const text = await response.text();
+
     if (!response.ok) {
-        throw new Error(`OpenRouter ${response.status}`);
+        throw new Error(
+            `OpenRouter ${response.status}: ${text}`
+        );
     }
 
-    const data = await response.json();
+    const data = JSON.parse(text);
 
-    return data.choices[0].message.content;
+    return data?.choices?.[0]?.message?.content ??
+        "No response";
 }
 
 async function askHF(prompt) {
     const response = await fetch(
-        "https://api-inference.huggingface.co/models/microsoft/Phi-3-mini-4k-instruct",
+        "https://api-inference.huggingface.co/models/google/gemma-2-2b-it",
         {
             method: "POST",
             headers: {
-                Authorization: `Bearer ${HF_KEY}`,
+                "Authorization": `Bearer ${HF_KEY}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
@@ -50,13 +55,20 @@ async function askHF(prompt) {
         }
     );
 
+    const text = await response.text();
+
     if (!response.ok) {
-        throw new Error(`HF ${response.status}`);
+        throw new Error(
+            `HF ${response.status}: ${text}`
+        );
     }
 
-    const data = await response.json();
+    const data = JSON.parse(text);
 
-    if (Array.isArray(data) && data[0]?.generated_text) {
+    if (
+        Array.isArray(data) &&
+        data[0]?.generated_text
+    ) {
         return data[0].generated_text;
     }
 
@@ -65,14 +77,27 @@ async function askHF(prompt) {
 
 const server = http.createServer(async (req, res) => {
     if (req.method !== "GET") {
-        return res.end("Only GET requests allowed");
+        res.writeHead(405);
+        return res.end(
+            "Only GET requests allowed"
+        );
     }
 
-    const prompt = decodeURIComponent(
-        req.url.slice(1)
-    ).trim();
+    let prompt;
 
-    if (!prompt) {
+    try {
+        prompt = decodeURIComponent(
+            req.url.split("?")[0].slice(1)
+        );
+    } catch {
+        res.writeHead(400);
+        return res.end(
+            "Invalid URL encoding"
+        );
+    }
+
+    if (!prompt.trim()) {
+        res.writeHead(400);
         return res.end(
             "Use /your-prompt-here"
         );
@@ -83,20 +108,20 @@ const server = http.createServer(async (req, res) => {
 
         try {
             console.log(
-                "Using OpenRouter..."
+                "Trying OpenRouter..."
             );
 
             answer = await askOpenRouter(
                 prompt
             );
-        } catch (e) {
-            console.log(
+        } catch (orError) {
+            console.error(
                 "OpenRouter failed:",
-                e.message
+                orError.message
             );
 
             console.log(
-                "Using Hugging Face..."
+                "Trying Hugging Face..."
             );
 
             answer = await askHF(prompt);
@@ -110,19 +135,19 @@ const server = http.createServer(async (req, res) => {
         });
 
         res.end(answer);
-    } catch (err) {
+
+    } catch (error) {
+        console.error(error);
+
         res.writeHead(500, {
             "Content-Type":
                 "application/json"
         });
 
-        res.end(
-            JSON.stringify({
-                error:
-                    "All providers failed",
-                details: err.message
-            })
-        );
+        res.end(JSON.stringify({
+            error: "All providers failed",
+            details: error.message
+        }));
     }
 });
 
