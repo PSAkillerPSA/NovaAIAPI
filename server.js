@@ -24,7 +24,8 @@ async function askOpenRouter(prompt) {
             method: "POST",
             headers: {
                 "Authorization": `Bearer ${OR_KEY}`,
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/PSAkillerPSA/NovaAIAPI"
             },
             body: JSON.stringify({
                 model: "inclusionai/ling-3.0-flash-sante:free",
@@ -33,7 +34,9 @@ async function askOpenRouter(prompt) {
                         role: "user",
                         content: prompt
                     }
-                ]
+                ],
+                temperature: 0.7,
+                max_tokens: 1024
             })
         }
     );
@@ -150,10 +153,84 @@ async function askHF(prompt) {
 }
 
 // ============================================================
+// FREE API (NO AUTH REQUIRED, LAST RESORT)
+// ============================================================
+
+async function askFreeAPI(prompt) {
+    // This is intentionally last because free/no-auth APIs are usually
+    // slower and less reliable than paid or key-backed providers.
+    const response = await fetch(
+        "https://api-inference.huggingface.co/models/google/gemma-2-2b-it",
+        {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                inputs: prompt,
+                parameters: {
+                    max_new_tokens: 256,
+                    return_full_text: false
+                },
+                options: {
+                    wait_for_model: true
+                }
+            })
+        }
+    );
+
+    const text = await response.text();
+
+    if (!response.ok) {
+        throw new Error(
+            `Free API ${response.status}: ${text}`
+        );
+    }
+
+    let data;
+
+    try {
+        data = JSON.parse(text);
+    } catch {
+        throw new Error(
+            `Free API returned invalid JSON: ${text}`
+        );
+    }
+
+    if (Array.isArray(data) && data.length > 0) {
+        if (typeof data[0]?.generated_text === "string") {
+            return data[0].generated_text;
+        }
+    }
+
+    if (data?.generated_text && typeof data.generated_text === "string") {
+        return data.generated_text;
+    }
+
+    if (data?.error) {
+        throw new Error(
+            `Free API error: ${data.error}`
+        );
+    }
+
+    throw new Error(
+        `Free API returned an unexpected response: ${text}`
+    );
+}
+
+// ============================================================
 // HTTP SERVER
 // ============================================================
 
 const server = http.createServer(async (req, res) => {
+
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+
+    if (req.method === "OPTIONS") {
+        res.writeHead(200);
+        return res.end();
+    }
 
     // Only GET requests
     if (req.method !== "GET") {
@@ -271,6 +348,40 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --------------------------------------------------------
+    // Try free API last
+    // --------------------------------------------------------
+
+    try {
+
+        console.log(
+            "[AI] Trying free API fallback..."
+        );
+
+        const answer =
+            await askFreeAPI(prompt);
+
+        console.log(
+            "[AI] Free API succeeded."
+        );
+
+        res.writeHead(200, {
+            "Content-Type":
+                "text/plain; charset=utf-8",
+            "Access-Control-Allow-Origin":
+                "*"
+        });
+
+        return res.end(answer);
+
+    } catch (freeError) {
+
+        console.error(
+            "[AI] Free API failed:",
+            freeError.message
+        );
+    }
+
+    // --------------------------------------------------------
     // Both failed
     // --------------------------------------------------------
 
@@ -301,5 +412,9 @@ server.listen(PORT, () => {
 
     console.log(
         `Hugging Face: ${HF_KEY ? "configured" : "NOT configured"}`
+    );
+
+    console.log(
+        `Free API fallback: available (no auth required, slowest)`
     );
 });
