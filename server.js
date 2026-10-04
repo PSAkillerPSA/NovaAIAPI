@@ -72,6 +72,57 @@ async function askOpenRouter(prompt) {
 }
 
 // ============================================================
+// HELPER: Parse HuggingFace Response
+// ============================================================
+
+function parseHFResponse(data, rawText) {
+    // Check for error in response
+    if (data?.error) {
+        throw new Error(`Hugging Face error: ${data.error}`);
+    }
+
+    // Format 1: Array of objects with generated_text
+    if (Array.isArray(data) && data.length > 0) {
+        if (typeof data[0]?.generated_text === "string") {
+            return data[0].generated_text;
+        }
+        // Handle nested structure in first array element
+        if (data[0]?.output || data[0]?.text) {
+            return data[0].output || data[0].text;
+        }
+    }
+
+    // Format 2: Direct generated_text property
+    if (typeof data?.generated_text === "string") {
+        return data.generated_text;
+    }
+
+    // Format 3: output property
+    if (typeof data?.output === "string") {
+        return data.output;
+    }
+
+    // Format 4: text property
+    if (typeof data?.text === "string") {
+        return data.text;
+    }
+
+    // Format 5: Direct string (some models return plain text)
+    if (typeof data === "string" && data.trim()) {
+        return data;
+    }
+
+    // If nothing matched, return raw text as fallback
+    if (typeof rawText === "string" && rawText.trim()) {
+        return rawText;
+    }
+
+    throw new Error(
+        `Hugging Face returned an unexpected response format: ${JSON.stringify(data)}`
+    );
+}
+
+// ============================================================
 // HUGGING FACE BACKUP
 // ============================================================
 
@@ -122,34 +173,7 @@ async function askHF(prompt) {
         );
     }
 
-    // Normal text-generation response
-    if (
-        Array.isArray(data) &&
-        data.length > 0 &&
-        typeof data[0]?.generated_text === "string"
-    ) {
-        return data[0].generated_text;
-    }
-
-    // Some HF responses can contain generated_text
-    // in a slightly different structure.
-    if (
-        data?.generated_text &&
-        typeof data.generated_text === "string"
-    ) {
-        return data.generated_text;
-    }
-
-    // Hugging Face can return an error object even with HTTP 200
-    if (data?.error) {
-        throw new Error(
-            `Hugging Face error: ${data.error}`
-        );
-    }
-
-    throw new Error(
-        `Hugging Face returned an unexpected response: ${text}`
-    );
+    return parseHFResponse(data, text);
 }
 
 // ============================================================
@@ -197,25 +221,7 @@ async function askFreeAPI(prompt) {
         );
     }
 
-    if (Array.isArray(data) && data.length > 0) {
-        if (typeof data[0]?.generated_text === "string") {
-            return data[0].generated_text;
-        }
-    }
-
-    if (data?.generated_text && typeof data.generated_text === "string") {
-        return data.generated_text;
-    }
-
-    if (data?.error) {
-        throw new Error(
-            `Free API error: ${data.error}`
-        );
-    }
-
-    throw new Error(
-        `Free API returned an unexpected response: ${text}`
-    );
+    return parseHFResponse(data, text);
 }
 
 // ============================================================
@@ -382,7 +388,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --------------------------------------------------------
-    // Both failed
+    // All failed
     // --------------------------------------------------------
 
     res.writeHead(503, {
