@@ -7,7 +7,6 @@ const PORT = process.env.PORT || 3000;
 // ============================================================
 
 const OR_KEY = process.env.OR_KEY;
-const GROQ_KEY = process.env.GROQ_KEY;
 
 // ============================================================
 // OPENROUTER
@@ -72,24 +71,21 @@ async function askOpenRouter(prompt) {
 }
 
 // ============================================================
-// GROQ API
+// BLOCKRUN AI (FREE, NO AUTH REQUIRED)
 // ============================================================
 
-async function askGroq(prompt) {
-    if (!GROQ_KEY) {
-        throw new Error("GROQ_KEY is not configured");
-    }
-
+async function askBlockRun(prompt) {
+    // BlockRun AI: Free unlimited access to 11 LLMs
+    // No auth required, no rate limits on free tier
     const response = await fetch(
-        "https://api.groq.com/openai/v1/chat/completions",
+        "https://api.blockrun.ai/v1/chat/completions",
         {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${GROQ_KEY}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: "mixtral-8x7b-32768",
+                model: "gpt-oss-120b",
                 messages: [
                     {
                         role: "user",
@@ -106,7 +102,7 @@ async function askGroq(prompt) {
 
     if (!response.ok) {
         throw new Error(
-            `Groq ${response.status}: ${text}`
+            `BlockRun ${response.status}: ${text}`
         );
     }
 
@@ -116,7 +112,7 @@ async function askGroq(prompt) {
         data = JSON.parse(text);
     } catch {
         throw new Error(
-            `Groq returned invalid JSON: ${text}`
+            `BlockRun returned invalid JSON: ${text}`
         );
     }
 
@@ -125,143 +121,11 @@ async function askGroq(prompt) {
 
     if (!answer) {
         throw new Error(
-            `Groq returned no answer: ${text}`
+            `BlockRun returned no answer: ${text}`
         );
     }
 
     return answer;
-}
-
-// ============================================================
-// FREE UNLIMITED API (NO AUTH REQUIRED, LAST RESORT)
-// ============================================================
-
-async function askFreeAPI(prompt) {
-    // Using Ollama local instance or public free endpoint
-    // Trying multiple free/unlimited endpoints in order
-    
-    const endpoints = [
-        // 1. Local Ollama (if running)
-        {
-            url: "http://localhost:11434/api/generate",
-            format: "ollama",
-            timeout: 5000
-        },
-        // 2. Inference.chat API (free, no auth)
-        {
-            url: "https://inference.chat/v1/chat/completions",
-            format: "openai",
-            timeout: 10000
-        },
-        // 3. Together AI (free tier, limited but available)
-        {
-            url: "https://api.together.xyz/v1/chat/completions",
-            format: "openai-together",
-            timeout: 10000
-        }
-    ];
-
-    for (const endpoint of endpoints) {
-        try {
-            console.log(`[FREE API] Trying ${endpoint.url}...`);
-
-            if (endpoint.format === "ollama") {
-                const response = await fetchWithTimeout(
-                    endpoint.url,
-                    {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            model: "llama2",
-                            prompt: prompt,
-                            stream: false
-                        })
-                    },
-                    endpoint.timeout
-                );
-
-                const text = await response.text();
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${text}`);
-                }
-
-                const data = JSON.parse(text);
-                if (data.response && typeof data.response === "string") {
-                    return data.response;
-                }
-            } else if (endpoint.format === "openai") {
-                const response = await fetchWithTimeout(
-                    endpoint.url,
-                    {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            model: "gpt-3.5-turbo",
-                            messages: [{ role: "user", content: prompt }],
-                            max_tokens: 256
-                        })
-                    },
-                    endpoint.timeout
-                );
-
-                const text = await response.text();
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${text}`);
-                }
-
-                const data = JSON.parse(text);
-                if (data?.choices?.[0]?.message?.content) {
-                    return data.choices[0].message.content;
-                }
-            } else if (endpoint.format === "openai-together") {
-                const response = await fetchWithTimeout(
-                    endpoint.url,
-                    {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                            model: "meta-llama/Llama-2-7b-chat-hf",
-                            messages: [{ role: "user", content: prompt }],
-                            temperature: 0.7,
-                            max_tokens: 256
-                        })
-                    },
-                    endpoint.timeout
-                );
-
-                const text = await response.text();
-
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${text}`);
-                }
-
-                const data = JSON.parse(text);
-                if (data?.choices?.[0]?.message?.content) {
-                    return data.choices[0].message.content;
-                }
-            }
-        } catch (err) {
-            console.error(`[FREE API] ${endpoint.url} failed:`, err.message);
-            continue; // Try next endpoint
-        }
-    }
-
-    throw new Error("All free API endpoints exhausted");
-}
-
-// ============================================================
-// FETCH WITH TIMEOUT HELPER
-// ============================================================
-
-function fetchWithTimeout(url, options, timeout = 10000) {
-    return Promise.race([
-        fetch(url, options),
-        new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Timeout")), timeout)
-        )
-    ]);
 }
 
 // ============================================================
@@ -360,20 +224,20 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --------------------------------------------------------
-    // Try Groq
+    // Try BlockRun AI (Fallback)
     // --------------------------------------------------------
 
     try {
 
         console.log(
-            "[AI] Trying Groq backup..."
+            "[AI] Trying BlockRun AI fallback..."
         );
 
         const answer =
-            await askGroq(prompt);
+            await askBlockRun(prompt);
 
         console.log(
-            "[AI] Groq succeeded."
+            "[AI] BlockRun AI succeeded."
         );
 
         res.writeHead(200, {
@@ -385,50 +249,16 @@ const server = http.createServer(async (req, res) => {
 
         return res.end(answer);
 
-    } catch (groqError) {
+    } catch (brError) {
 
         console.error(
-            "[AI] Groq failed:",
-            groqError.message
+            "[AI] BlockRun AI failed:",
+            brError.message
         );
     }
 
     // --------------------------------------------------------
-    // Try free API last
-    // --------------------------------------------------------
-
-    try {
-
-        console.log(
-            "[AI] Trying free API fallback..."
-        );
-
-        const answer =
-            await askFreeAPI(prompt);
-
-        console.log(
-            "[AI] Free API succeeded."
-        );
-
-        res.writeHead(200, {
-            "Content-Type":
-                "text/plain; charset=utf-8",
-            "Access-Control-Allow-Origin":
-                "*"
-        });
-
-        return res.end(answer);
-
-    } catch (freeError) {
-
-        console.error(
-            "[AI] Free API failed:",
-            freeError.message
-        );
-    }
-
-    // --------------------------------------------------------
-    // All failed
+    // All providers failed
     // --------------------------------------------------------
 
     res.writeHead(503, {
@@ -457,10 +287,6 @@ server.listen(PORT, () => {
     );
 
     console.log(
-        `Groq: ${GROQ_KEY ? "configured" : "NOT configured"}`
-    );
-
-    console.log(
-        `Free API fallback: available (no auth required, multiple endpoints)`
+        `BlockRun AI: available (free unlimited, no auth required)`
     );
 });
