@@ -71,12 +71,10 @@ async function askOpenRouter(prompt) {
 }
 
 // ============================================================
-// BLOCKRUN AI (FREE, NO AUTH REQUIRED)
+// BLOCKRUN AI (FREE / NO AUTH)
 // ============================================================
 
 async function askBlockRun(prompt) {
-    // BlockRun AI: Free unlimited access to 11 LLMs
-    // No auth required, no rate limits on free tier
     const response = await fetch(
         "https://api.blockrun.ai/v1/chat/completions",
         {
@@ -142,15 +140,12 @@ const server = http.createServer(async (req, res) => {
         return res.end();
     }
 
-    // Only GET requests
     if (req.method !== "GET") {
         res.writeHead(405, {
             "Content-Type": "text/plain; charset=utf-8"
         });
 
-        return res.end(
-            "Only GET requests allowed"
-        );
+        return res.end("Only GET requests allowed");
     }
 
     // --------------------------------------------------------
@@ -160,19 +155,14 @@ const server = http.createServer(async (req, res) => {
     let prompt;
 
     try {
-        const rawPath =
-            req.url.split("?")[0].slice(1);
-
+        const rawPath = req.url.split("?")[0].slice(1);
         prompt = decodeURIComponent(rawPath);
-
     } catch {
         res.writeHead(400, {
             "Content-Type": "text/plain; charset=utf-8"
         });
 
-        return res.end(
-            "Invalid URL encoding"
-        );
+        return res.end("Invalid URL encoding");
     }
 
     if (!prompt.trim()) {
@@ -180,92 +170,62 @@ const server = http.createServer(async (req, res) => {
             "Content-Type": "text/plain; charset=utf-8"
         });
 
-        return res.end(
-            "Use /your-prompt-here"
-        );
+        return res.end("Use /your-prompt-here");
     }
 
-    console.log(
-        `[REQUEST] ${prompt}`
-    );
+    console.log(`[REQUEST] ${prompt}`);
 
     // --------------------------------------------------------
     // Try OpenRouter
     // --------------------------------------------------------
 
     try {
+        console.log("[AI] Trying OpenRouter...");
 
-        console.log(
-            "[AI] Trying OpenRouter..."
-        );
+        const answer = await askOpenRouter(prompt);
 
-        const answer =
-            await askOpenRouter(prompt);
-
-        console.log(
-            "[AI] OpenRouter succeeded."
-        );
+        console.log("[AI] OpenRouter succeeded.");
 
         res.writeHead(200, {
-            "Content-Type":
-                "text/plain; charset=utf-8",
-            "Access-Control-Allow-Origin":
-                "*"
+            "Content-Type": "text/plain; charset=utf-8",
+            "Access-Control-Allow-Origin": "*"
         });
 
         return res.end(answer);
 
     } catch (orError) {
-
-        console.error(
-            "[AI] OpenRouter failed:",
-            orError.message
-        );
+        console.error("[AI] OpenRouter failed:", orError.message);
     }
 
     // --------------------------------------------------------
-    // Try BlockRun AI (Fallback)
+    // Try BlockRun AI fallback
     // --------------------------------------------------------
 
     try {
+        console.log("[AI] Trying BlockRun AI fallback...");
 
-        console.log(
-            "[AI] Trying BlockRun AI fallback..."
-        );
+        const answer = await askBlockRun(prompt);
 
-        const answer =
-            await askBlockRun(prompt);
-
-        console.log(
-            "[AI] BlockRun AI succeeded."
-        );
+        console.log("[AI] BlockRun AI succeeded.");
 
         res.writeHead(200, {
-            "Content-Type":
-                "text/plain; charset=utf-8",
-            "Access-Control-Allow-Origin":
-                "*"
+            "Content-Type": "text/plain; charset=utf-8",
+            "Access-Control-Allow-Origin": "*"
         });
 
         return res.end(answer);
 
     } catch (brError) {
-
-        console.error(
-            "[AI] BlockRun AI failed:",
-            brError.message
-        );
+        console.error("[AI] BlockRun AI failed:", brError.message);
     }
 
     // --------------------------------------------------------
-    // All providers failed
+    // All failed
     // --------------------------------------------------------
 
     res.writeHead(503, {
-        "Content-Type":
-            "application/json",
-        "Access-Control-Allow-Origin":
-            "*"
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*"
     });
 
     res.end(JSON.stringify({
@@ -278,15 +238,7 @@ const server = http.createServer(async (req, res) => {
 // ============================================================
 
 server.listen(PORT, () => {
-    console.log(
-        `AI proxy running on port ${PORT}`
-    );
-
-    console.log(
-        `OpenRouter: ${OR_KEY ? "configured" : "NOT configured"}`
-    );
-
-    console.log(
-        `BlockRun AI: available (free unlimited, no auth required)`
-    );
+    console.log(`AI proxy running on port ${PORT}`);
+    console.log(`OpenRouter: ${OR_KEY ? "configured" : "NOT configured"}`);
+    console.log(`BlockRun AI: available (free, no auth required)`);
 });
