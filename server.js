@@ -71,22 +71,19 @@ async function askOpenRouter(prompt) {
 }
 
 // ============================================================
-// FREE FALLBACK (NO AUTH, NO PAYMENT)
+// FREE FALLBACK
 // ============================================================
 
 async function askFreeAPI(prompt) {
+    // Try public free endpoints
     const endpoints = [
         {
-            url: "https://api.deepseek.com/chat/completions",
-            model: "deepseek-chat"
+            url: "https://api.perplexity.ai/chat/completions",
+            model: "mistral-7b-instruct"
         },
         {
-            url: "https://api.mistral.ai/v1/chat/completions",
-            model: "mistral-tiny"
-        },
-        {
-            url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
-            model: "gemini-pro"
+            url: "https://api.together.xyz/v1/chat/completions",
+            model: "meta-llama/Llama-2-7b-chat-hf"
         }
     ];
 
@@ -94,23 +91,28 @@ async function askFreeAPI(prompt) {
         try {
             console.log(`[FREE API] Trying ${endpoint.url}...`);
 
-            const response = await fetch(endpoint.url, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    model: endpoint.model,
-                    messages: [
-                        {
-                            role: "user",
-                            content: prompt
-                        }
-                    ],
-                    temperature: 0.7,
-                    max_tokens: 1024
-                })
-            });
+            const response = await Promise.race([
+                fetch(endpoint.url, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        model: endpoint.model,
+                        messages: [
+                            {
+                                role: "user",
+                                content: prompt
+                            }
+                        ],
+                        temperature: 0.7,
+                        max_tokens: 1024
+                    })
+                }),
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error("Timeout")), 10000)
+                )
+            ]);
 
             const text = await response.text();
 
@@ -128,14 +130,6 @@ async function askFreeAPI(prompt) {
 
             if (data?.choices?.[0]?.message?.content) {
                 return data.choices[0].message.content;
-            }
-
-            if (data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-                return data.candidates[0].content.parts[0].text;
-            }
-
-            if (data?.result) {
-                return data.result;
             }
 
         } catch (err) {
@@ -261,5 +255,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
     console.log(`AI proxy running on port ${PORT}`);
     console.log(`OpenRouter: ${OR_KEY ? "configured" : "NOT configured"}`);
-    console.log(`Free API fallback: available (no auth, no payment)`);
+    console.log(`Free API fallback: Perplexity → Together AI`);
 });
