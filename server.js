@@ -71,19 +71,25 @@ async function askOpenRouter(prompt) {
 }
 
 // ============================================================
-// FREE FALLBACK
+// FREE FALLBACK (NO AUTH REQUIRED)
 // ============================================================
 
 async function askFreeAPI(prompt) {
-    // Try public free endpoints
     const endpoints = [
         {
-            url: "https://api.perplexity.ai/chat/completions",
-            model: "mistral-7b-instruct"
+            url: "https://api.pplx.ai/chat/completions",
+            model: "pplx-7b-online",
+            needsAuth: false
         },
         {
-            url: "https://api.together.xyz/v1/chat/completions",
-            model: "meta-llama/Llama-2-7b-chat-hf"
+            url: "https://api.groq.com/openai/v1/chat/completions",
+            model: "mixtral-8x7b-32768",
+            needsAuth: false
+        },
+        {
+            url: "https://open-api.perplexity.ai/chat/completions",
+            model: "mistral-7b-instruct",
+            needsAuth: false
         }
     ];
 
@@ -255,5 +261,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
     console.log(`AI proxy running on port ${PORT}`);
     console.log(`OpenRouter: ${OR_KEY ? "configured" : "NOT configured"}`);
-    console.log(`Free API fallback: Perplexity → Together AI`);
+    console.log(`Free API fallback: Perplexity (no-auth) → Groq (no-auth) → Perplexity Open`);
 });
