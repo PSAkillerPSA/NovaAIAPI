@@ -2,10 +2,22 @@ const http = require("http");
 
 const PORT = process.env.PORT || 3000;
 
+// ============================================================
+// API KEYS
+// ============================================================
+
 const OR_KEY = process.env.OR_KEY;
 const HF_KEY = process.env.HF_KEY;
 
+// ============================================================
+// OPENROUTER
+// ============================================================
+
 async function askOpenRouter(prompt) {
+    if (!OR_KEY) {
+        throw new Error("OR_KEY is not configured");
+    }
+
     const response = await fetch(
         "https://openrouter.ai/api/v1/chat/completions",
         {
@@ -34,15 +46,42 @@ async function askOpenRouter(prompt) {
         );
     }
 
-    const data = JSON.parse(text);
+    let data;
 
-    return data?.choices?.[0]?.message?.content ??
-        "No response";
+    try {
+        data = JSON.parse(text);
+    } catch {
+        throw new Error(
+            `OpenRouter returned invalid JSON: ${text}`
+        );
+    }
+
+    const answer =
+        data?.choices?.[0]?.message?.content;
+
+    if (!answer) {
+        throw new Error(
+            `OpenRouter returned no answer: ${text}`
+        );
+    }
+
+    return answer;
 }
 
+// ============================================================
+// HUGGING FACE BACKUP
+// ============================================================
+
 async function askHF(prompt) {
+    if (!HF_KEY) {
+        throw new Error("HF_KEY is not configured");
+    }
+
+    const model =
+        "google/gemma-2-2b-it";
+
     const response = await fetch(
-        "https://api-inference.huggingface.co/models/google/gemma-2-2b-it",
+        `https://api-inference.huggingface.co/models/${model}`,
         {
             method: "POST",
             headers: {
@@ -50,7 +89,14 @@ async function askHF(prompt) {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                inputs: prompt
+                inputs: prompt,
+                parameters: {
+                    max_new_tokens: 512,
+                    return_full_text: false
+                },
+                options: {
+                    wait_for_model: true
+                }
             })
         }
     );
@@ -59,73 +105,119 @@ async function askHF(prompt) {
 
     if (!response.ok) {
         throw new Error(
-            `HF ${response.status}: ${text}`
+            `Hugging Face ${response.status}: ${text}`
         );
     }
 
-    const data = JSON.parse(text);
+    let data;
 
+    try {
+        data = JSON.parse(text);
+    } catch {
+        throw new Error(
+            `Hugging Face returned invalid JSON: ${text}`
+        );
+    }
+
+    // Normal text-generation response
     if (
         Array.isArray(data) &&
-        data[0]?.generated_text
+        data.length > 0 &&
+        typeof data[0]?.generated_text === "string"
     ) {
         return data[0].generated_text;
     }
 
-    return JSON.stringify(data);
+    // Some HF responses can contain generated_text
+    // in a slightly different structure.
+    if (
+        data?.generated_text &&
+        typeof data.generated_text === "string"
+    ) {
+        return data.generated_text;
+    }
+
+    // Hugging Face can return an error object even with HTTP 200
+    if (data?.error) {
+        throw new Error(
+            `Hugging Face error: ${data.error}`
+        );
+    }
+
+    throw new Error(
+        `Hugging Face returned an unexpected response: ${text}`
+    );
 }
 
+// ============================================================
+// HTTP SERVER
+// ============================================================
+
 const server = http.createServer(async (req, res) => {
+
+    // Only GET requests
     if (req.method !== "GET") {
-        res.writeHead(405);
+        res.writeHead(405, {
+            "Content-Type": "text/plain; charset=utf-8"
+        });
+
         return res.end(
             "Only GET requests allowed"
         );
     }
 
+    // --------------------------------------------------------
+    // Extract prompt
+    // --------------------------------------------------------
+
     let prompt;
 
     try {
-        prompt = decodeURIComponent(
-            req.url.split("?")[0].slice(1)
-        );
+        const rawPath =
+            req.url.split("?")[0].slice(1);
+
+        prompt = decodeURIComponent(rawPath);
+
     } catch {
-        res.writeHead(400);
+        res.writeHead(400, {
+            "Content-Type": "text/plain; charset=utf-8"
+        });
+
         return res.end(
             "Invalid URL encoding"
         );
     }
 
     if (!prompt.trim()) {
-        res.writeHead(400);
+        res.writeHead(400, {
+            "Content-Type": "text/plain; charset=utf-8"
+        });
+
         return res.end(
             "Use /your-prompt-here"
         );
     }
 
+    console.log(
+        `[REQUEST] ${prompt}`
+    );
+
+    // --------------------------------------------------------
+    // Try OpenRouter
+    // --------------------------------------------------------
+
     try {
-        let answer;
 
-        try {
-            console.log(
-                "Trying OpenRouter..."
-            );
+        console.log(
+            "[AI] Trying OpenRouter..."
+        );
 
-            answer = await askOpenRouter(
-                prompt
-            );
-        } catch (orError) {
-            console.error(
-                "OpenRouter failed:",
-                orError.message
-            );
+        const answer =
+            await askOpenRouter(prompt);
 
-            console.log(
-                "Trying Hugging Face..."
-            );
-
-            answer = await askHF(prompt);
-        }
+        console.log(
+            "[AI] OpenRouter succeeded."
+        );
 
         res.writeHead(200, {
             "Content-Type":
@@ -134,25 +226,80 @@ const server = http.createServer(async (req, res) => {
                 "*"
         });
 
-        res.end(answer);
+        return res.end(answer);
 
-    } catch (error) {
-        console.error(error);
+    } catch (orError) {
 
-        res.writeHead(500, {
+        console.error(
+            "[AI] OpenRouter failed:",
+            orError.message
+        );
+    }
+
+    // --------------------------------------------------------
+    // Try Hugging Face
+    // --------------------------------------------------------
+
+    try {
+
+        console.log(
+            "[AI] Trying Hugging Face backup..."
+        );
+
+        const answer =
+            await askHF(prompt);
+
+        console.log(
+            "[AI] Hugging Face succeeded."
+        );
+
+        res.writeHead(200, {
             "Content-Type":
-                "application/json"
+                "text/plain; charset=utf-8",
+            "Access-Control-Allow-Origin":
+                "*"
         });
 
-        res.end(JSON.stringify({
-            error: "All providers failed",
-            details: error.message
-        }));
+        return res.end(answer);
+
+    } catch (hfError) {
+
+        console.error(
+            "[AI] Hugging Face failed:",
+            hfError.message
+        );
     }
+
+    // --------------------------------------------------------
+    // Both failed
+    // --------------------------------------------------------
+
+    res.writeHead(503, {
+        "Content-Type":
+            "application/json",
+        "Access-Control-Allow-Origin":
+            "*"
+    });
+
+    res.end(JSON.stringify({
+        error: "All AI providers failed"
+    }));
 });
+
+// ============================================================
+// START SERVER
+// ============================================================
 
 server.listen(PORT, () => {
     console.log(
         `AI proxy running on port ${PORT}`
+    );
+
+    console.log(
+        `OpenRouter: ${OR_KEY ? "configured" : "NOT configured"}`
+    );
+
+    console.log(
+        `Hugging Face: ${HF_KEY ? "configured" : "NOT configured"}`
     );
 });
