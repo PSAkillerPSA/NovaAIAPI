@@ -7,7 +7,7 @@ const PORT = process.env.PORT || 3000;
 // ============================================================
 
 const OR_KEY = process.env.OR_KEY;
-const HF_KEY = process.env.HF_KEY;
+const GROQ_KEY = process.env.GROQ_KEY;
 
 // ============================================================
 // OPENROUTER
@@ -72,85 +72,32 @@ async function askOpenRouter(prompt) {
 }
 
 // ============================================================
-// HELPER: Parse HuggingFace Response
+// GROQ API
 // ============================================================
 
-function parseHFResponse(data, rawText) {
-    // Check for error in response
-    if (data?.error) {
-        throw new Error(`Hugging Face error: ${data.error}`);
+async function askGroq(prompt) {
+    if (!GROQ_KEY) {
+        throw new Error("GROQ_KEY is not configured");
     }
-
-    // Format 1: Array of objects with generated_text
-    if (Array.isArray(data) && data.length > 0) {
-        if (typeof data[0]?.generated_text === "string") {
-            return data[0].generated_text;
-        }
-        // Handle nested structure in first array element
-        if (data[0]?.output || data[0]?.text) {
-            return data[0].output || data[0].text;
-        }
-    }
-
-    // Format 2: Direct generated_text property
-    if (typeof data?.generated_text === "string") {
-        return data.generated_text;
-    }
-
-    // Format 3: output property
-    if (typeof data?.output === "string") {
-        return data.output;
-    }
-
-    // Format 4: text property
-    if (typeof data?.text === "string") {
-        return data.text;
-    }
-
-    // Format 5: Direct string (some models return plain text)
-    if (typeof data === "string" && data.trim()) {
-        return data;
-    }
-
-    // If nothing matched, return raw text as fallback
-    if (typeof rawText === "string" && rawText.trim()) {
-        return rawText;
-    }
-
-    throw new Error(
-        `Hugging Face returned an unexpected response format: ${JSON.stringify(data)}`
-    );
-}
-
-// ============================================================
-// HUGGING FACE BACKUP
-// ============================================================
-
-async function askHF(prompt) {
-    if (!HF_KEY) {
-        throw new Error("HF_KEY is not configured");
-    }
-
-    const model =
-        "google/gemma-2-2b-it";
 
     const response = await fetch(
-        `https://api-inference.huggingface.co/models/${model}`,
+        "https://api.groq.com/openai/v1/chat/completions",
         {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${HF_KEY}`,
+                "Authorization": `Bearer ${GROQ_KEY}`,
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                inputs: prompt,
-                parameters: {
-                    max_new_tokens: 512,
-                    return_full_text: false
-                },
-                options: {
-                    wait_for_model: true
-                }
+                model: "mixtral-8x7b-32768",
+                messages: [
+                    {
+                        role: "user",
+                        content: prompt
+                    }
+                ],
+                temperature: 0.7,
+                max_tokens: 1024
             })
         }
     );
@@ -159,7 +106,7 @@ async function askHF(prompt) {
 
     if (!response.ok) {
         throw new Error(
-            `Hugging Face ${response.status}: ${text}`
+            `Groq ${response.status}: ${text}`
         );
     }
 
@@ -169,59 +116,152 @@ async function askHF(prompt) {
         data = JSON.parse(text);
     } catch {
         throw new Error(
-            `Hugging Face returned invalid JSON: ${text}`
+            `Groq returned invalid JSON: ${text}`
         );
     }
 
-    return parseHFResponse(data, text);
+    const answer =
+        data?.choices?.[0]?.message?.content;
+
+    if (!answer) {
+        throw new Error(
+            `Groq returned no answer: ${text}`
+        );
+    }
+
+    return answer;
 }
 
 // ============================================================
-// FREE API (NO AUTH REQUIRED, LAST RESORT)
+// FREE UNLIMITED API (NO AUTH REQUIRED, LAST RESORT)
 // ============================================================
 
 async function askFreeAPI(prompt) {
-    // This is intentionally last because free/no-auth APIs are usually
-    // slower and less reliable than paid or key-backed providers.
-    const response = await fetch(
-        "https://api-inference.huggingface.co/models/google/gemma-2-2b-it",
+    // Using Ollama local instance or public free endpoint
+    // Trying multiple free/unlimited endpoints in order
+    
+    const endpoints = [
+        // 1. Local Ollama (if running)
         {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                inputs: prompt,
-                parameters: {
-                    max_new_tokens: 256,
-                    return_full_text: false
-                },
-                options: {
-                    wait_for_model: true
-                }
-            })
+            url: "http://localhost:11434/api/generate",
+            format: "ollama",
+            timeout: 5000
+        },
+        // 2. Inference.chat API (free, no auth)
+        {
+            url: "https://inference.chat/v1/chat/completions",
+            format: "openai",
+            timeout: 10000
+        },
+        // 3. Together AI (free tier, limited but available)
+        {
+            url: "https://api.together.xyz/v1/chat/completions",
+            format: "openai-together",
+            timeout: 10000
         }
-    );
+    ];
 
-    const text = await response.text();
+    for (const endpoint of endpoints) {
+        try {
+            console.log(`[FREE API] Trying ${endpoint.url}...`);
 
-    if (!response.ok) {
-        throw new Error(
-            `Free API ${response.status}: ${text}`
-        );
+            if (endpoint.format === "ollama") {
+                const response = await fetchWithTimeout(
+                    endpoint.url,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            model: "llama2",
+                            prompt: prompt,
+                            stream: false
+                        })
+                    },
+                    endpoint.timeout
+                );
+
+                const text = await response.text();
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${text}`);
+                }
+
+                const data = JSON.parse(text);
+                if (data.response && typeof data.response === "string") {
+                    return data.response;
+                }
+            } else if (endpoint.format === "openai") {
+                const response = await fetchWithTimeout(
+                    endpoint.url,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            model: "gpt-3.5-turbo",
+                            messages: [{ role: "user", content: prompt }],
+                            max_tokens: 256
+                        })
+                    },
+                    endpoint.timeout
+                );
+
+                const text = await response.text();
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${text}`);
+                }
+
+                const data = JSON.parse(text);
+                if (data?.choices?.[0]?.message?.content) {
+                    return data.choices[0].message.content;
+                }
+            } else if (endpoint.format === "openai-together") {
+                const response = await fetchWithTimeout(
+                    endpoint.url,
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            model: "meta-llama/Llama-2-7b-chat-hf",
+                            messages: [{ role: "user", content: prompt }],
+                            temperature: 0.7,
+                            max_tokens: 256
+                        })
+                    },
+                    endpoint.timeout
+                );
+
+                const text = await response.text();
+
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${text}`);
+                }
+
+                const data = JSON.parse(text);
+                if (data?.choices?.[0]?.message?.content) {
+                    return data.choices[0].message.content;
+                }
+            }
+        } catch (err) {
+            console.error(`[FREE API] ${endpoint.url} failed:`, err.message);
+            continue; // Try next endpoint
+        }
     }
 
-    let data;
+    throw new Error("All free API endpoints exhausted");
+}
 
-    try {
-        data = JSON.parse(text);
-    } catch {
-        throw new Error(
-            `Free API returned invalid JSON: ${text}`
-        );
-    }
+// ============================================================
+// FETCH WITH TIMEOUT HELPER
+// ============================================================
 
-    return parseHFResponse(data, text);
+function fetchWithTimeout(url, options, timeout = 10000) {
+    return Promise.race([
+        fetch(url, options),
+        new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Timeout")), timeout)
+        )
+    ]);
 }
 
 // ============================================================
@@ -320,20 +360,20 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --------------------------------------------------------
-    // Try Hugging Face
+    // Try Groq
     // --------------------------------------------------------
 
     try {
 
         console.log(
-            "[AI] Trying Hugging Face backup..."
+            "[AI] Trying Groq backup..."
         );
 
         const answer =
-            await askHF(prompt);
+            await askGroq(prompt);
 
         console.log(
-            "[AI] Hugging Face succeeded."
+            "[AI] Groq succeeded."
         );
 
         res.writeHead(200, {
@@ -345,11 +385,11 @@ const server = http.createServer(async (req, res) => {
 
         return res.end(answer);
 
-    } catch (hfError) {
+    } catch (groqError) {
 
         console.error(
-            "[AI] Hugging Face failed:",
-            hfError.message
+            "[AI] Groq failed:",
+            groqError.message
         );
     }
 
@@ -417,10 +457,10 @@ server.listen(PORT, () => {
     );
 
     console.log(
-        `Hugging Face: ${HF_KEY ? "configured" : "NOT configured"}`
+        `Groq: ${GROQ_KEY ? "configured" : "NOT configured"}`
     );
 
     console.log(
-        `Free API fallback: available (no auth required, slowest)`
+        `Free API fallback: available (no auth required, multiple endpoints)`
     );
 });
