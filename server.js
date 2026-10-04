@@ -6,25 +6,33 @@ const PORT = process.env.PORT || 3000;
 // API KEYS
 // ============================================================
 
-// Keep this as your OpenRouter API key
+// ONLY REAL API KEY REQUIRED BY THIS SCRIPT
 const OR_KEY = process.env.OR_KEY;
-
-// Google Gemini API key
-// Get one from Google AI Studio:
-// https://aistudio.google.com/apikey
-const GEMINI_KEY = process.env.GEMINI_KEY;
 
 // ============================================================
 // CONFIG
 // ============================================================
 
-const OPENROUTER_MODEL = "openrouter/free";
-const GEMINI_MODEL = "gemini-2.5-flash-lite";
-
 const REQUEST_TIMEOUT = 15000;
 
+// OpenRouter's free router automatically chooses an available
+// free model.
+const OPENROUTER_MODEL = "openrouter/free";
+
+// LLMFaucet automatically routes across several anonymous
+// providers.
+const LLMFAUCET_MODEL = "auto";
+
+// Pollinations currently provides anonymous text generation.
+// Model availability can change, so we use its generic model.
+const POLLINATIONS_MODEL = "openai";
+
+// AI Horde supports anonymous requests using ten zeros as
+// the anonymous API key.
+const AI_HORDE_ANONYMOUS_KEY = "0000000000";
+
 // ============================================================
-// HELPER: FETCH WITH TIMEOUT
+// FETCH WITH TIMEOUT
 // ============================================================
 
 async function fetchWithTimeout(url, options = {}, timeout = REQUEST_TIMEOUT) {
@@ -45,7 +53,42 @@ async function fetchWithTimeout(url, options = {}, timeout = REQUEST_TIMEOUT) {
 }
 
 // ============================================================
-// OPENROUTER
+// PARSE OPENAI-COMPATIBLE RESPONSE
+// ============================================================
+
+async function parseOpenAIResponse(response, provider) {
+    const text = await response.text();
+
+    if (!response.ok) {
+        throw new Error(
+            `${provider} ${response.status}: ${text.slice(0, 1000)}`
+        );
+    }
+
+    let data;
+
+    try {
+        data = JSON.parse(text);
+    } catch {
+        throw new Error(
+            `${provider} returned invalid JSON: ${text.slice(0, 1000)}`
+        );
+    }
+
+    const answer =
+        data?.choices?.[0]?.message?.content;
+
+    if (!answer || typeof answer !== "string") {
+        throw new Error(
+            `${provider} returned no answer: ${text.slice(0, 1000)}`
+        );
+    }
+
+    return answer.trim();
+}
+
+// ============================================================
+// 1. OPENROUTER
 // ============================================================
 
 async function askOpenRouter(prompt) {
@@ -53,19 +96,24 @@ async function askOpenRouter(prompt) {
         throw new Error("OR_KEY is not configured");
     }
 
+    console.log("[OpenRouter] Trying...");
+
     const response = await fetchWithTimeout(
         "https://openrouter.ai/api/v1/chat/completions",
         {
             method: "POST",
+
             headers: {
                 "Authorization": `Bearer ${OR_KEY}`,
                 "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/PSAkillerPSA/NovaAIAPI",
+
+                "HTTP-Referer":
+                    "https://github.com/PSAkillerPSA/NovaAIAPI",
+
                 "X-Title": "NovaAIAPI"
             },
+
             body: JSON.stringify({
-                // OpenRouter's own free router automatically selects
-                // an available free model.
                 model: OPENROUTER_MODEL,
 
                 messages: [
@@ -81,50 +129,81 @@ async function askOpenRouter(prompt) {
         }
     );
 
-    const text = await response.text();
-
-    if (!response.ok) {
-        throw new Error(
-            `OpenRouter ${response.status}: ${text}`
-        );
-    }
-
-    let data;
-
-    try {
-        data = JSON.parse(text);
-    } catch {
-        throw new Error(
-            `OpenRouter returned invalid JSON: ${text}`
-        );
-    }
-
-    const answer = data?.choices?.[0]?.message?.content;
-
-    if (!answer || typeof answer !== "string") {
-        throw new Error(
-            `OpenRouter returned no answer: ${text}`
-        );
-    }
-
-    return answer.trim();
+    return await parseOpenAIResponse(
+        response,
+        "OpenRouter"
+    );
 }
 
 // ============================================================
-// GOOGLE GEMINI FALLBACK
+// 2. LLMFAUCET
 // ============================================================
+//
+// LLMFaucet is a public OpenAI-compatible gateway that
+// automatically routes among anonymous/keyless sources.
+//
+// Current documented upstreams include:
+// - Pollinations
+// - LLM7
+// - OpenCode Zen
+// - OVH AI Endpoints
+// - AI Horde
+//
+// No real API key is required.
+// "free" is merely a placeholder authorization value.
+//
 
-async function askGemini(prompt) {
-    if (!GEMINI_KEY) {
-        throw new Error("GEMINI_KEY is not configured");
-    }
-
-    const url =
-        `https://generativelanguage.googleapis.com/v1beta/models/` +
-        `${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(GEMINI_KEY)}`;
+async function askLLMFaucet(prompt) {
+    console.log("[LLMFaucet] Trying...");
 
     const response = await fetchWithTimeout(
-        url,
+        "https://api.llmfaucet.dev/v1/chat/completions",
+        {
+            method: "POST",
+
+            headers: {
+                "Authorization": "Bearer free",
+                "Content-Type": "application/json"
+            },
+
+            body: JSON.stringify({
+                model: LLMFAUCET_MODEL,
+
+                messages: [
+                    {
+                        role: "user",
+                        content: prompt
+                    }
+                ],
+
+                temperature: 0.7,
+                max_tokens: 1024
+            })
+        }
+    );
+
+    return await parseOpenAIResponse(
+        response,
+        "LLMFaucet"
+    );
+}
+
+// ============================================================
+// 3. POLLINATIONS DIRECT
+// ============================================================
+//
+// Anonymous / no API key.
+// OpenAI-compatible endpoint.
+//
+// This is intentionally separate from LLMFaucet so that if
+// LLMFaucet itself is down, we can still reach Pollinations.
+//
+
+async function askPollinations(prompt) {
+    console.log("[Pollinations] Trying...");
+
+    const response = await fetchWithTimeout(
+        "https://text.pollinations.ai/openai/chat/completions",
         {
             method: "POST",
 
@@ -133,230 +212,485 @@ async function askGemini(prompt) {
             },
 
             body: JSON.stringify({
-                contents: [
+                model: POLLINATIONS_MODEL,
+
+                messages: [
                     {
                         role: "user",
-                        parts: [
-                            {
-                                text: prompt
-                            }
-                        ]
+                        content: prompt
                     }
                 ],
 
-                generationConfig: {
-                    temperature: 0.7,
-                    maxOutputTokens: 1024
-                }
+                temperature: 0.7,
+                max_tokens: 1024
             })
         }
     );
 
-    const text = await response.text();
+    return await parseOpenAIResponse(
+        response,
+        "Pollinations"
+    );
+}
 
-    if (!response.ok) {
+// ============================================================
+// 4. AI HORDE
+// ============================================================
+//
+// AI Horde is a crowdsourced AI network.
+// Anonymous requests are supported with:
+//
+// 0000000000
+//
+// Anonymous requests have the lowest queue priority.
+//
+
+async function askAIHorde(prompt) {
+    console.log("[AI Horde] Submitting...");
+
+    const submitResponse = await fetchWithTimeout(
+        "https://aihorde.net/api/v2/generate/text/async",
+        {
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json",
+                "apikey": AI_HORDE_ANONYMOUS_KEY
+            },
+
+            body: JSON.stringify({
+                prompt,
+
+                params: {
+                    max_length: 1024,
+                    max_context_length: 4096,
+                    temperature: 0.7,
+                    n: 1
+                },
+
+                models: [],
+
+                trusted_workers: false,
+
+                client_agent:
+                    "NovaAIAPI:1.0"
+            })
+        }
+    );
+
+    const submitText = await submitResponse.text();
+
+    if (!submitResponse.ok) {
         throw new Error(
-            `Gemini ${response.status}: ${text}`
+            `AI Horde submit ${submitResponse.status}: ${submitText}`
         );
     }
 
-    let data;
+    let submitted;
 
     try {
-        data = JSON.parse(text);
+        submitted = JSON.parse(submitText);
     } catch {
         throw new Error(
-            `Gemini returned invalid JSON: ${text}`
+            `AI Horde returned invalid submit JSON`
         );
     }
 
-    const answer =
-        data?.candidates?.[0]?.content?.parts
-            ?.map(part => part?.text || "")
-            .join("")
-            .trim();
+    const requestId = submitted?.id;
 
-    if (!answer) {
+    if (!requestId) {
         throw new Error(
-            `Gemini returned no answer: ${text}`
+            `AI Horde did not return a request ID`
         );
     }
 
-    return answer;
+    // --------------------------------------------------------
+    // Poll for completion
+    // --------------------------------------------------------
+
+    const maxAttempts = 8;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+
+        await new Promise(resolve =>
+            setTimeout(resolve, 1500)
+        );
+
+        const statusResponse = await fetchWithTimeout(
+            `https://aihorde.net/api/v2/generate/text/status/${requestId}`,
+            {
+                method: "GET",
+
+                headers: {
+                    "apikey": AI_HORDE_ANONYMOUS_KEY
+                }
+            }
+        );
+
+        const statusText =
+            await statusResponse.text();
+
+        if (!statusResponse.ok) {
+            throw new Error(
+                `AI Horde status ${statusResponse.status}: ${statusText}`
+            );
+        }
+
+        let status;
+
+        try {
+            status = JSON.parse(statusText);
+        } catch {
+            throw new Error(
+                "AI Horde returned invalid status JSON"
+            );
+        }
+
+        // Completed
+        if (
+            status?.done === true &&
+            Array.isArray(status?.generations)
+        ) {
+            const answer =
+                status.generations[0]?.text;
+
+            if (answer) {
+                return answer.trim();
+            }
+
+            throw new Error(
+                "AI Horde completed without generated text"
+            );
+        }
+
+        // Explicit failure
+        if (status?.faulted === true) {
+            throw new Error(
+                `AI Horde generation faulted: ${statusText}`
+            );
+        }
+
+        console.log(
+            `[AI Horde] Still processing (${attempt + 1}/${maxAttempts})...`
+        );
+    }
+
+    throw new Error(
+        "AI Horde timed out waiting for generation"
+    );
+}
+
+// ============================================================
+// FALLBACK CHAIN
+// ============================================================
+//
+// Only OpenRouter needs a real secret.
+//
+// Everything after it is keyless.
+//
+// IMPORTANT:
+// We do NOT fire every provider simultaneously.
+// We try them sequentially to avoid wasting free quotas.
+//
+
+const providers = [
+    {
+        name: "OpenRouter",
+        enabled: () => Boolean(OR_KEY),
+        ask: askOpenRouter
+    },
+
+    {
+        name: "LLMFaucet",
+        enabled: () => true,
+        ask: askLLMFaucet
+    },
+
+    {
+        name: "Pollinations",
+        enabled: () => true,
+        ask: askPollinations
+    },
+
+    {
+        name: "AI Horde",
+        enabled: () => true,
+        ask: askAIHorde
+    }
+];
+
+// ============================================================
+// ASK ALL PROVIDERS
+// ============================================================
+
+async function askAI(prompt) {
+
+    const errors = [];
+
+    for (const provider of providers) {
+
+        if (!provider.enabled()) {
+            console.log(
+                `[AI] ${provider.name} disabled`
+            );
+
+            continue;
+        }
+
+        try {
+
+            console.log(
+                `[AI] Trying ${provider.name}...`
+            );
+
+            const answer =
+                await provider.ask(prompt);
+
+            if (!answer) {
+                throw new Error(
+                    "Provider returned an empty answer"
+                );
+            }
+
+            console.log(
+                `[AI] ${provider.name} succeeded.`
+            );
+
+            return {
+                answer,
+                provider: provider.name
+            };
+
+        } catch (error) {
+
+            const message =
+                error?.message || String(error);
+
+            console.error(
+                `[AI] ${provider.name} failed: ${message}`
+            );
+
+            errors.push({
+                provider: provider.name,
+                error: message
+            });
+        }
+    }
+
+    const error = new Error(
+        "All AI providers failed"
+    );
+
+    error.providers = errors;
+
+    throw error;
 }
 
 // ============================================================
 // HTTP SERVER
 // ============================================================
 
-const server = http.createServer(async (req, res) => {
+const server = http.createServer(
+    async (req, res) => {
 
-    // --------------------------------------------------------
-    // CORS
-    // --------------------------------------------------------
+        // ----------------------------------------------------
+        // CORS
+        // ----------------------------------------------------
 
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader(
-        "Access-Control-Allow-Methods",
-        "GET, OPTIONS"
-    );
-    res.setHeader(
-        "Access-Control-Allow-Headers",
-        "Content-Type"
-    );
-
-    // --------------------------------------------------------
-    // OPTIONS
-    // --------------------------------------------------------
-
-    if (req.method === "OPTIONS") {
-        res.writeHead(204);
-        return res.end();
-    }
-
-    // --------------------------------------------------------
-    // GET ONLY
-    // --------------------------------------------------------
-
-    if (req.method !== "GET") {
-        res.writeHead(405, {
-            "Content-Type": "text/plain; charset=utf-8"
-        });
-
-        return res.end("Only GET requests allowed");
-    }
-
-    // --------------------------------------------------------
-    // EXTRACT PROMPT
-    // --------------------------------------------------------
-
-    let prompt;
-
-    try {
-        // URL.pathname is safer than manually splitting req.url.
-        const pathname = new URL(
-            req.url,
-            `http://${req.headers.host || "localhost"}`
-        ).pathname;
-
-        prompt = decodeURIComponent(
-            pathname.replace(/^\/+/, "")
+        res.setHeader(
+            "Access-Control-Allow-Origin",
+            "*"
         );
-    } catch {
-        res.writeHead(400, {
-            "Content-Type": "text/plain; charset=utf-8"
-        });
 
-        return res.end("Invalid URL encoding");
-    }
+        res.setHeader(
+            "Access-Control-Allow-Methods",
+            "GET, OPTIONS"
+        );
 
-    if (!prompt.trim()) {
-        res.writeHead(400, {
-            "Content-Type": "text/plain; charset=utf-8"
-        });
+        res.setHeader(
+            "Access-Control-Allow-Headers",
+            "Content-Type"
+        );
 
-        return res.end("Use /your-prompt-here");
-    }
+        // ----------------------------------------------------
+        // OPTIONS
+        // ----------------------------------------------------
 
-    console.log(`[REQUEST] ${prompt}`);
+        if (req.method === "OPTIONS") {
+            res.writeHead(204);
+            return res.end();
+        }
 
-    // --------------------------------------------------------
-    // TRY OPENROUTER FIRST
-    // --------------------------------------------------------
+        // ----------------------------------------------------
+        // GET ONLY
+        // ----------------------------------------------------
 
-    if (OR_KEY) {
-        try {
-            console.log("[AI] Trying OpenRouter...");
+        if (req.method !== "GET") {
 
-            const answer = await askOpenRouter(prompt);
-
-            console.log("[AI] OpenRouter succeeded.");
-
-            res.writeHead(200, {
-                "Content-Type": "text/plain; charset=utf-8"
+            res.writeHead(405, {
+                "Content-Type":
+                    "text/plain; charset=utf-8"
             });
 
-            return res.end(answer);
-
-        } catch (error) {
-            console.error(
-                "[AI] OpenRouter failed:",
-                error.message
+            return res.end(
+                "Only GET requests allowed"
             );
         }
-    } else {
-        console.log(
-            "[AI] OR_KEY is not configured. Skipping OpenRouter."
-        );
-    }
 
-    // --------------------------------------------------------
-    // TRY GEMINI FALLBACK
-    // --------------------------------------------------------
+        // ----------------------------------------------------
+        // Extract prompt
+        // ----------------------------------------------------
 
-    if (GEMINI_KEY) {
+        let prompt;
+
         try {
-            console.log("[AI] Trying Gemini fallback...");
 
-            const answer = await askGemini(prompt);
+            const url = new URL(
+                req.url,
+                `http://${req.headers.host || "localhost"}`
+            );
 
-            console.log("[AI] Gemini succeeded.");
+            prompt = decodeURIComponent(
+                url.pathname.replace(/^\/+/, "")
+            );
 
-            res.writeHead(200, {
-                "Content-Type": "text/plain; charset=utf-8"
+        } catch {
+
+            res.writeHead(400, {
+                "Content-Type":
+                    "text/plain; charset=utf-8"
             });
 
-            return res.end(answer);
-
-        } catch (error) {
-            console.error(
-                "[AI] Gemini failed:",
-                error.message
+            return res.end(
+                "Invalid URL encoding"
             );
         }
-    } else {
+
+        if (!prompt.trim()) {
+
+            res.writeHead(400, {
+                "Content-Type":
+                    "text/plain; charset=utf-8"
+            });
+
+            return res.end(
+                "Use /your-prompt-here"
+            );
+        }
+
+        console.log("");
         console.log(
-            "[AI] GEMINI_KEY is not configured. Skipping Gemini."
+            "=========================================="
         );
+        console.log(
+            `[REQUEST] ${prompt}`
+        );
+        console.log(
+            "=========================================="
+        );
+
+        // ----------------------------------------------------
+        // Ask AI
+        // ----------------------------------------------------
+
+        try {
+
+            const result =
+                await askAI(prompt);
+
+            res.writeHead(200, {
+                "Content-Type":
+                    "text/plain; charset=utf-8",
+
+                "X-AI-Provider":
+                    result.provider
+            });
+
+            return res.end(
+                result.answer
+            );
+
+        } catch (error) {
+
+            console.error(
+                "[AI] Everything failed."
+            );
+
+            // ------------------------------------------------
+            // 503
+            // ------------------------------------------------
+
+            res.writeHead(503, {
+                "Content-Type":
+                    "application/json; charset=utf-8"
+            });
+
+            return res.end(
+                JSON.stringify({
+                    error:
+                        "All AI providers failed",
+
+                    providers:
+                        error.providers || []
+                })
+            );
+        }
     }
-
-    // --------------------------------------------------------
-    // ALL PROVIDERS FAILED
-    // --------------------------------------------------------
-
-    res.writeHead(503, {
-        "Content-Type": "application/json; charset=utf-8"
-    });
-
-    return res.end(
-        JSON.stringify({
-            error: "All AI providers failed",
-            providers: {
-                openrouter: Boolean(OR_KEY),
-                gemini: Boolean(GEMINI_KEY)
-            }
-        })
-    );
-});
+);
 
 // ============================================================
-// START SERVER
+// START
 // ============================================================
 
 server.listen(PORT, () => {
+
     console.log("");
-    console.log("==========================================");
-    console.log(`AI proxy running on port ${PORT}`);
-    console.log("==========================================");
     console.log(
-        `OpenRouter: ${OR_KEY ? "configured" : "NOT configured"}`
+        "=========================================="
     );
     console.log(
-        `Gemini:     ${GEMINI_KEY ? "configured" : "NOT configured"}`
+        `NovaAIAPI running on port ${PORT}`
     );
+    console.log(
+        "=========================================="
+    );
+
+    console.log(
+        `OpenRouter:  ${OR_KEY ? "configured" : "NOT configured"}`
+    );
+
+    console.log(
+        "LLMFaucet:   enabled (no key)"
+    );
+
+    console.log(
+        "Pollinations: enabled (no key)"
+    );
+
+    console.log(
+        "AI Horde:    enabled (anonymous)"
+    );
+
     console.log("");
-    console.log("Fallback order:");
-    console.log("1. OpenRouter");
-    console.log("2. Google Gemini");
-    console.log("==========================================");
+    console.log(
+        "Fallback order:"
+    );
+
+    console.log(
+        "1. OpenRouter"
+    );
+
+    console.log(
+        "2. LLMFaucet → multiple anonymous upstreams"
+    );
+
+    console.log(
+        "3. Pollinations"
+    );
+
+    console.log(
+        "4. AI Horde"
+    );
+
+    console.log("");
 });
