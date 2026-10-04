@@ -12,6 +12,68 @@ const OR_KEY = process.env.OR_KEY;
 // OPENROUTER
 // ============================================================
 
+async function askOpenRouter(prompt) {
+    if (!OR_KEY) {
+        throw new Error("OR_KEY is not configured");
+    }
+
+    const response = await fetch(
+        "https://openrouter.ai/api/v1/chat/completions",
+        {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${OR_KEY}`,
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://github.com/PSAkillerPSA/NovaAIAPI"
+            },
+            body: JSON.stringify({
+                model: "inclusionai/ling-3.0-flash-sante:free",
+                messages: [
+                    {
+                        role: "user",
+                        content: prompt
+                    }
+                ],
+                temperature: 0.7,
+                max_tokens: 1024
+            })
+        }
+    );
+
+    const text = await response.text();
+
+    if (!response.ok) {
+        throw new Error(
+            `OpenRouter ${response.status}: ${text}`
+        );
+    }
+
+    let data;
+
+    try {
+        data = JSON.parse(text);
+    } catch {
+        throw new Error(
+            `OpenRouter returned invalid JSON: ${text}`
+        );
+    }
+
+    const answer =
+        data?.choices?.[0]?.message?.content;
+
+    if (!answer) {
+        throw new Error(
+            `OpenRouter returned no answer: ${text}`
+        );
+    }
+
+    return answer;
+}
+
+// ============================================================
+// BLOCKRUN AI (FREE / NO AUTH)
+// ============================================================
+
 async function askBlockRun(prompt) {
     const response = await fetch(
         "https://blockrun.ai/api/v1/chat/completions",
@@ -22,7 +84,7 @@ async function askBlockRun(prompt) {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify({
-                model: "nvidia/llama3-8b-instruct",
+                model: "openai/gpt-6-astra",
                 messages: [
                     {
                         role: "user",
