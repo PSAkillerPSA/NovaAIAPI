@@ -71,60 +71,80 @@ async function askOpenRouter(prompt) {
 }
 
 // ============================================================
-// BLOCKRUN AI (FREE / NO AUTH)
+// FREE FALLBACK (NO AUTH, NO PAYMENT)
 // ============================================================
 
-async function askBlockRun(prompt) {
-    const response = await fetch(
-        "https://blockrun.ai/api/v1/chat/completions",
+async function askFreeAPI(prompt) {
+    const endpoints = [
         {
-            method: "POST",
-            headers: {
-                "Authorization": "Bearer placeholder",
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({
-                model: "openai/gpt-6-astra",
-                messages: [
-                    {
-                        role: "user",
-                        content: prompt
-                    }
-                ],
-                temperature: 0.7,
-                max_tokens: 1024
-            })
+            url: "https://api.deepseek.com/chat/completions",
+            model: "deepseek-chat"
+        },
+        {
+            url: "https://api.mistral.ai/v1/chat/completions",
+            model: "mistral-tiny"
+        },
+        {
+            url: "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
+            model: "gemini-pro"
         }
-    );
+    ];
 
-    const text = await response.text();
+    for (const endpoint of endpoints) {
+        try {
+            console.log(`[FREE API] Trying ${endpoint.url}...`);
 
-    if (!response.ok) {
-        throw new Error(
-            `BlockRun ${response.status}: ${text}`
-        );
+            const response = await fetch(endpoint.url, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    model: endpoint.model,
+                    messages: [
+                        {
+                            role: "user",
+                            content: prompt
+                        }
+                    ],
+                    temperature: 0.7,
+                    max_tokens: 1024
+                })
+            });
+
+            const text = await response.text();
+
+            if (!response.ok) {
+                console.log(`[FREE API] ${endpoint.url} returned ${response.status}`);
+                continue;
+            }
+
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch {
+                continue;
+            }
+
+            if (data?.choices?.[0]?.message?.content) {
+                return data.choices[0].message.content;
+            }
+
+            if (data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+                return data.candidates[0].content.parts[0].text;
+            }
+
+            if (data?.result) {
+                return data.result;
+            }
+
+        } catch (err) {
+            console.log(`[FREE API] ${endpoint.url} error: ${err.message}`);
+            continue;
+        }
     }
 
-    let data;
-
-    try {
-        data = JSON.parse(text);
-    } catch {
-        throw new Error(
-            `BlockRun returned invalid JSON: ${text}`
-        );
-    }
-
-    const answer =
-        data?.choices?.[0]?.message?.content;
-
-    if (!answer) {
-        throw new Error(
-            `BlockRun returned no answer: ${text}`
-        );
-    }
-
-    return answer;
+    throw new Error("All free API endpoints exhausted");
 }
 
 // ============================================================
@@ -199,15 +219,15 @@ const server = http.createServer(async (req, res) => {
     }
 
     // --------------------------------------------------------
-    // Try BlockRun AI fallback
+    // Try free API fallback
     // --------------------------------------------------------
 
     try {
-        console.log("[AI] Trying BlockRun AI fallback...");
+        console.log("[AI] Trying free API fallback...");
 
-        const answer = await askBlockRun(prompt);
+        const answer = await askFreeAPI(prompt);
 
-        console.log("[AI] BlockRun AI succeeded.");
+        console.log("[AI] Free API succeeded.");
 
         res.writeHead(200, {
             "Content-Type": "text/plain; charset=utf-8",
@@ -216,8 +236,8 @@ const server = http.createServer(async (req, res) => {
 
         return res.end(answer);
 
-    } catch (brError) {
-        console.error("[AI] BlockRun AI failed:", brError.message);
+    } catch (freeError) {
+        console.error("[AI] Free API failed:", freeError.message);
     }
 
     // --------------------------------------------------------
@@ -241,5 +261,5 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, () => {
     console.log(`AI proxy running on port ${PORT}`);
     console.log(`OpenRouter: ${OR_KEY ? "configured" : "NOT configured"}`);
-    console.log(`BlockRun AI: available (free, no auth required)`);
+    console.log(`Free API fallback: available (no auth, no payment)`);
 });
